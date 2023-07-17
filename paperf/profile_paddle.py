@@ -68,29 +68,43 @@ def register_profile_hook(model):
         layer.register_forward_post_hook(hook=_forward_post_hook)
 
 
-def switch_profile(iter_id, start, end, event_name=None):
+def switch_profile(iter_id, start, end, event_name=None, enable_layerwise_event=False):
     global _PROFILER_ENABLED
     if event_name is None:
         event_name = "iter_{}".format(iter_id)
     if iter_id == start:
         paddle.fluid.core.nvprof_start()
         _PROFILER_ENABLED = True
-        # paddle.fluid.core.nvprof_enable_record_event()
+        if enable_layerwise_event:
+            paddle.profiler.utils._is_profiler_used = True
+            paddle.fluid.core.nvprof_enable_record_event()
         paddle.fluid.core.nvprof_nvtx_push(event_name)
     elif iter_id == end:
         paddle.fluid.core.nvprof_nvtx_pop()
         _PROFILER_ENABLED = False
         paddle.fluid.core.nvprof_stop()
+        if enable_layerwise_event:
+            paddle.profiler.utils._is_profiler_used = False
     elif iter_id > start and iter_id < end:
         paddle.fluid.core.nvprof_nvtx_pop()
         paddle.fluid.core.nvprof_nvtx_push(event_name)
 
 
 @contextlib.contextmanager
-def add_nvtx_event(event_name):
+def add_record_event(event_name):
     if _PROFILER_ENABLED:
         paddle.fluid.core.nvprof_nvtx_push(event_name)
         yield
         paddle.fluid.core.nvprof_nvtx_pop()
     else:
         yield
+
+
+def push_record_event(event_name):
+    if _PROFILER_ENABLED:
+        paddle.fluid.core.nvprof_nvtx_push(event_name)
+
+
+def pop_record_event():
+    if _PROFILER_ENABLED:
+        paddle.fluid.core.nvprof_nvtx_pop()
