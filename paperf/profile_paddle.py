@@ -30,42 +30,25 @@ def _forward_post_hook(module, inputs, outputs):
         paddle.fluid.core.nvprof_nvtx_pop()
 
 
-def _get_layers(model):
-    """
-    get each layer's name and its module
-    :param model:
-    :return: each layer's name and its module
-    """
-    layers = []
+def _register_hook_recursively(module, pre_hook, post_hook):
+    if not isinstance(module, paddle.nn.Layer):
+        return
 
-    def unfold_layer(model):
-        # get all layers of the model
-        layer_list = list(model.named_children())
-        for item in layer_list:
-            module = item[1]
-            sublayers = list(module.named_children())
-            num_sublayers = len(sublayers)
+    for submodule in module.children():
+        _register_hook_recursively(submodule, pre_hook, post_hook)
 
-            # if current layer contains sublayers, add current layer name on its sublayers
-            if num_sublayers == 0:
-                layers.append(module)
-            # if current layer contains sublayers, unfold them
-            elif isinstance(module, paddle.nn.Layer):
-                unfold_layer(module)
-
-    unfold_layer(model)
-    return layers
+    if pre_hook is not None:
+        module.register_forward_pre_hook(hook=pre_hook)
+    if post_hook is not None:
+        module.register_forward_post_hook(hook=post_hook)
 
 
 def register_profile_hook(model):
-    assert isinstance(model, paddle.nn.Layer)
-    model.register_forward_pre_hook(hook=_forward_pre_hook)
-    model.register_forward_post_hook(hook=_forward_post_hook)
-
-    layers = _get_layers(model)
-    for layer in layers:
-        layer.register_forward_pre_hook(hook=_forward_pre_hook)
-        layer.register_forward_post_hook(hook=_forward_post_hook)
+    if isinstance(model, paddle.nn.Layer):
+        _register_hook_recursively(model, _forward_pre_hook, _forward_post_hook)
+    elif isinstance(model, list):
+        for module in model:
+            _register_hook_recursively(module, _forward_pre_hook, _forward_post_hook)
 
 
 def switch_profile(iter_id, start, end, event_name=None, enable_layerwise_event=False):
