@@ -57,6 +57,7 @@ def switch_profile(iter_id, start, end, event_name=None):
     if event_name is None:
         event_name = "iter_{}".format(iter_id)
     if iter_id == start:
+        torch.cuda.synchronize()
         torch.cuda.cudart().cudaProfilerStart()
         _PROFILER_ENABLED = True
         torch.cuda.nvtx.range_push(event_name)
