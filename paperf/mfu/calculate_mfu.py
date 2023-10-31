@@ -45,7 +45,7 @@ class MFUCalculator(object):
             setattr(self, key, value)
         return self
 
-    def calc_mfu(self, speed, peak_flops_per_device):
+    def calc_mfu_hfu(self, speed, peak_flops_per_device, recompute_granularity=None):
         """
         Args:
           speed: tokens per second per GPU
@@ -55,33 +55,53 @@ class MFUCalculator(object):
         mlp_flop, mlp_params = self.calc_mlp_flops()
         head_flop, head_params = self.calc_head_flops()
 
-        num_flop_per_batch = (
+        model_flop_per_batch = (
             (attn_flop + mlp_flop) * self.num_hidden_layers + head_flop
         ) * 3
+        if recompute_granularity is None:
+            hardware_flop_per_batch = model_flop_per_batch
+        elif recompute_granularity == "full":
+            hardware_flop_per_batch = (
+                model_flop_per_batch + (attn_flop + mlp_flop) * self.num_hidden_layers
+            )
+        elif recompute_granularity == "full_attn":
+            hardware_flop_per_batch = (
+                model_flop_per_batch + attn_flop * self.num_hidden_layers
+            )
+        else:
+            assert False
+
         num_params = (attn_params + mlp_params) * self.num_hidden_layers + head_params
 
         # (gbs * max_seqlen) / step_time = speed * num_gpus
         # => step_time = (gbs * max_seqlen) / (speed * num_gpus)
         #
-        # actual_flops = (num_flop_per_batch * gbs) / step_time
-        #              = (num_flop_per_batch * gbs) / ((gbs * max_seqlen) / (speed * num_gpus))
-        #              = (num_flop_per_batch * speed * num_gpus) / max_seqlen
-        actual_flops_per_device = (num_flop_per_batch * speed) / (
+        # model_flops = (model_flop_per_batch * gbs) / step_time
+        #             = (model_flop_per_batch * gbs) / ((gbs * max_seqlen) / (speed * num_gpus))
+        #             = (model_flop_per_batch * speed * num_gpus) / max_seqlen
+        model_flops_per_device = (model_flop_per_batch * speed) / (
             self.max_seqlen * 1e12
         )
 
-        # MFU = actual_flops_per_device / peak_flops_per_device
-        #     = (num_flop_per_batch * speed) / (max_seqlen * peak_flops_per_device)
-        mfu = (num_flop_per_batch * speed) / (
+        # MFU = model_flops_per_device / peak_flops_per_device
+        #     = (model_flop_per_batch * speed) / (max_seqlen * peak_flops_per_device)
+        mfu = (model_flop_per_batch * speed) / (
             self.max_seqlen * peak_flops_per_device * 1e12
         )
-        mfu_coeff = num_flop_per_batch / (
+        mfu_coeff = model_flop_per_batch / (
+            self.max_seqlen * peak_flops_per_device * 1e12
+        )
+
+        hfu = (hardware_flop_per_batch * speed) / (
+            self.max_seqlen * peak_flops_per_device * 1e12
+        )
+        hfu_coeff = hardware_flop_per_batch / (
             self.max_seqlen * peak_flops_per_device * 1e12
         )
 
         num_params_format = format(num_params, ",")
         print(
-            f"- Model Name: {self.model_name}; Parameters: {num_params_format}; Model FLOPs: {actual_flops_per_device:.3f}; MFU: {mfu * 100:.2f}% (coeff: {mfu_coeff})"
+            f"- Model Name: {self.model_name}; Parameters: {num_params_format}; Model FLOPs: {model_flops_per_device:.3f}; MFU: {mfu * 100:.2f}% (coeff: {mfu_coeff}); HFU: {hfu * 100:.2f}% (hfu_coeff: {hfu_coeff})"
         )
 
     def calc_attention_flops(self):
@@ -215,7 +235,8 @@ def main(args):
     else:
         peak_flops_per_device = dev.peak_flops[precision]
 
-    calculator.calc_mfu(speed, peak_flops_per_device)
+    recompute_granularity = get_value(args, "recompute_granularity")
+    calculator.calc_mfu_hfu(speed, peak_flops_per_device, recompute_granularity)
 
 
 if __name__ == "__main__":
@@ -258,6 +279,12 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--num_gpus", type=int, default=None, help="The number of GPUs."
+    )
+    parser.add_argument(
+        "--recompute_granularity",
+        type=str,
+        default=None,
+        help="Only support full, full_attn.",
     )
     args = parser.parse_args()
 

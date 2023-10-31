@@ -25,4 +25,13 @@
     "intermediate_size": 22016,
     "has_gate_linear": true,
     "vocab_size": 32000
+}, {
+    "model_name": "meta-llama/Llama-2-13b",
+    "max_seqlen": 4096,
+    "num_hidden_layers": 40,
+    "num_attention_heads": 40,
+    "hidden_size": 5120,
+    "intermediate_size": 13824,
+    "has_gate_linear": true,
+    "vocab_size": 32000
 }]
