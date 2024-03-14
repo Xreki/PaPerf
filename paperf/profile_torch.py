@@ -86,7 +86,7 @@ def _register_backward_hook_recursively(module, pre_hook, post_hook):
         module.register_full_backward_hook(hook=post_hook)
 
 
-def register_profile_hook(model, backward=True, debug=None):
+def register_profile_hook(model, backward=False, debug=None):
     if debug is not None:
         global _DEBUG_INFO
         _DEBUG_INFO = debug
@@ -95,23 +95,37 @@ def register_profile_hook(model, backward=True, debug=None):
         _register_forward_hook_recursively(model, _forward_pre_hook, _forward_post_hook)
     elif isinstance(model, list):
         for module in model:
-            _register_forward_hook_recursively(module, _forward_pre_hook, _forward_post_hook)
+            _register_forward_hook_recursively(
+                module, _forward_pre_hook, _forward_post_hook
+            )
 
     if debug is None and backward:
         # backwrad hook cannot be used for profile.
         if isinstance(model, torch.nn.Module):
-            _register_backward_hook_recursively(model, _backward_pre_hook, _backward_post_hook)
+            _register_backward_hook_recursively(
+                model, _backward_pre_hook, _backward_post_hook
+            )
         elif isinstance(model, list):
             for module in model:
-                _register_backward_hook_recursively(module, _backward_pre_hook, _backward_post_hook)
+                _register_backward_hook_recursively(
+                    module, _backward_pre_hook, _backward_post_hook
+                )
 
 
 def _enter_emit_nvtx(record_shapes=False):
     # following code is changed from torch.autograd.profiler.emit_nvtx class.
-    # https://github.com/pytorch/pytorch/blob/38d9bb5abcc31ba97927a5399b88afe2cf60bf64/torch/autograd/profiler.py#L743
-    torch.autograd.profiler._run_on_profiler_start()
+    try:
+        from torch.autograd.profiler import _run_on_profiler_start
+
+        # https://github.com/pytorch/pytorch/blob/38d9bb5abcc31ba97927a5399b88afe2cf60bf64/torch/autograd/profiler.py#L743
+        _run_on_profiler_start()
+    except ImportError:
+        # For older version of torch, there is no definition and call of _run_on_profiler_start
+        # https://github.com/pytorch/pytorch/blob/c263bd43e8e8502d4726643bc6fd046f0130ac0e/torch/autograd/profiler.py#L619
+        pass
+
     torch.autograd.profiler._enable_profiler(
-    torch.autograd.profiler.ProfilerConfig(
+        torch.autograd.profiler.ProfilerConfig(
             torch.autograd.profiler.ProfilerState.NVTX,
             record_shapes,
             False,
@@ -126,10 +140,19 @@ def _enter_emit_nvtx(record_shapes=False):
 
 def _exit_emit_nvtx():
     torch.autograd.profiler._disable_profiler()
-    torch.autograd.profiler._run_on_profiler_stop()
+
+    try:
+        from torch.autograd.profiler import _run_on_profiler_stop
+
+        _run_on_profiler_stop()
+    except ImportError:
+        # For older version of torch, there is no definition and call of _run_on_profiler_stop
+        pass
 
 
-def switch_profile(iter_id, start, end, event_name=None, enable_aten_event=False, record_shapes=False):
+def switch_profile(
+    iter_id, start, end, event_name=None, enable_aten_event=False, record_shapes=False
+):
     global _PROFILER_ENABLED
     if event_name is None:
         event_name = "iter_{}".format(iter_id)
