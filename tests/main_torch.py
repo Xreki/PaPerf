@@ -45,7 +45,7 @@ def main():
 
     max_iters = 20
     for iter_id in range(max_iters):
-        profile_torch.switch_profile(iter_id, 10, 20, enable_aten_event=True)
+        profile_torch.switch_profile(iter_id, 10, 20, enable_aten_event=True, record_shapes=True)
 
         # Use context
         with profile_torch.add_record_event("forward"):

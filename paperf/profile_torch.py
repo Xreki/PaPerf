@@ -47,7 +47,7 @@ def _backward_pre_hook(module, grad_output):
     if _PROFILER_ENABLED:
         torch.cuda.nvtx.range_push(module.__class__.__name__ + "_bwd")
     return None
-    
+
 
 def _backward_post_hook(module, grad_input, grad_output):
     global _DEBUG_INFO
@@ -107,7 +107,7 @@ def register_profile_hook(model, backward=True, debug=None):
 
 
 def _enter_emit_nvtx(record_shapes=False):
-    # following code is change from torch.autograd.profiler.emit_nvtx class.
+    # following code is changed from torch.autograd.profiler.emit_nvtx class.
     # https://github.com/pytorch/pytorch/blob/38d9bb5abcc31ba97927a5399b88afe2cf60bf64/torch/autograd/profiler.py#L743
     torch.autograd.profiler._run_on_profiler_start()
     torch.autograd.profiler._enable_profiler(
@@ -129,7 +129,7 @@ def _exit_emit_nvtx():
     torch.autograd.profiler._run_on_profiler_stop()
 
 
-def switch_profile(iter_id, start, end, event_name=None, enable_aten_event=False):
+def switch_profile(iter_id, start, end, event_name=None, enable_aten_event=False, record_shapes=False):
     global _PROFILER_ENABLED
     if event_name is None:
         event_name = "iter_{}".format(iter_id)
@@ -138,7 +138,7 @@ def switch_profile(iter_id, start, end, event_name=None, enable_aten_event=False
         torch.cuda.cudart().cudaProfilerStart()
         _PROFILER_ENABLED = True
         if enable_aten_event:
-            _enter_emit_nvtx()
+            _enter_emit_nvtx(record_shapes=record_shapes)
         torch.cuda.nvtx.range_push(event_name)
     elif iter_id == end:
         torch.cuda.nvtx.range_pop()
