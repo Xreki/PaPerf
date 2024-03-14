@@ -17,26 +17,54 @@ import contextlib
 
 
 _PROFILER_ENABLED = False
+_DEBUG_INFO = None
 
 
-def _forward_pre_hook(layer, inputs):
-    # print(f"[{layer.__class__.__name__}]")
+def _forward_pre_hook(module, inputs):
+    global _DEBUG_INFO
+    if _DEBUG_INFO:
+        print(f"-- [Enter {module.__class__.__name__} forward] ")
+
     if _PROFILER_ENABLED:
-        torch.cuda.nvtx.range_push(layer.__class__.__name__ + "_fwd")
+        torch.cuda.nvtx.range_push(module.__class__.__name__ + "_fwd")
     return None
 
 
 def _forward_post_hook(module, inputs, outputs):
+    global _DEBUG_INFO
+    if _DEBUG_INFO:
+        print(f"-- [Leave {module.__class__.__name__} forward] ")
+
     if _PROFILER_ENABLED:
         torch.cuda.nvtx.range_pop()
 
 
-def _register_hook_recursively(module, pre_hook, post_hook):
+def _backward_pre_hook(module, grad_output):
+    global _DEBUG_INFO
+    if _DEBUG_INFO:
+        print(f"-- [Enter {module.__class__.__name__} backward] ")
+
+    if _PROFILER_ENABLED:
+        torch.cuda.nvtx.range_push(module.__class__.__name__ + "_bwd")
+    return None
+    
+
+def _backward_post_hook(module, grad_input, grad_output):
+    global _DEBUG_INFO
+    if _DEBUG_INFO:
+        print(f"-- [Leave {module.__class__.__name__} backward] ")
+
+    if _PROFILER_ENABLED:
+        torch.cuda.nvtx.range_pop()
+    return None
+
+
+def _register_forward_hook_recursively(module, pre_hook, post_hook):
     if not isinstance(module, torch.nn.Module):
         return
 
     for submodule in module.children():
-        _register_hook_recursively(submodule, pre_hook, post_hook)
+        _register_forward_hook_recursively(submodule, pre_hook, post_hook)
 
     if pre_hook is not None:
         module.register_forward_pre_hook(hook=pre_hook)
@@ -44,15 +72,64 @@ def _register_hook_recursively(module, pre_hook, post_hook):
         module.register_forward_hook(hook=post_hook)
 
 
-def register_profile_hook(model):
+def _register_backward_hook_recursively(module, pre_hook, post_hook):
+    if not isinstance(module, torch.nn.Module):
+        return
+
+    if pre_hook is not None:
+        module.register_full_backward_pre_hook(hook=pre_hook)
+
+    for submodule in module.children():
+        _register_backward_hook_recursively(submodule, pre_hook, post_hook)
+
+    if post_hook is not None:
+        module.register_full_backward_hook(hook=post_hook)
+
+
+def register_profile_hook(model, backward=True, debug=None):
+    if debug is not None:
+        global _DEBUG_INFO
+        _DEBUG_INFO = debug
+
     if isinstance(model, torch.nn.Module):
-        _register_hook_recursively(model, _forward_pre_hook, _forward_post_hook)
+        _register_forward_hook_recursively(model, _forward_pre_hook, _forward_post_hook)
     elif isinstance(model, list):
         for module in model:
-            _register_hook_recursively(module, _forward_pre_hook, _forward_post_hook)
+            _register_forward_hook_recursively(module, _forward_pre_hook, _forward_post_hook)
+
+    if debug is None and backward:
+        # backwrad hook cannot be used for profile.
+        if isinstance(model, torch.nn.Module):
+            _register_backward_hook_recursively(model, _backward_pre_hook, _backward_post_hook)
+        elif isinstance(model, list):
+            for module in model:
+                _register_backward_hook_recursively(module, _backward_pre_hook, _backward_post_hook)
 
 
-def switch_profile(iter_id, start, end, event_name=None):
+def _enter_emit_nvtx(record_shapes=False):
+    # following code is change from torch.autograd.profiler.emit_nvtx class.
+    # https://github.com/pytorch/pytorch/blob/38d9bb5abcc31ba97927a5399b88afe2cf60bf64/torch/autograd/profiler.py#L743
+    torch.autograd.profiler._run_on_profiler_start()
+    torch.autograd.profiler._enable_profiler(
+    torch.autograd.profiler.ProfilerConfig(
+            torch.autograd.profiler.ProfilerState.NVTX,
+            record_shapes,
+            False,
+            False,
+            False,
+            False,
+            torch.autograd.profiler._ExperimentalConfig(),
+        ),
+        set(),
+    )
+
+
+def _exit_emit_nvtx():
+    torch.autograd.profiler._disable_profiler()
+    torch.autograd.profiler._run_on_profiler_stop()
+
+
+def switch_profile(iter_id, start, end, event_name=None, enable_aten_event=False):
     global _PROFILER_ENABLED
     if event_name is None:
         event_name = "iter_{}".format(iter_id)
@@ -60,10 +137,15 @@ def switch_profile(iter_id, start, end, event_name=None):
         torch.cuda.synchronize()
         torch.cuda.cudart().cudaProfilerStart()
         _PROFILER_ENABLED = True
+        if enable_aten_event:
+            _enter_emit_nvtx()
         torch.cuda.nvtx.range_push(event_name)
     elif iter_id == end:
         torch.cuda.nvtx.range_pop()
         _PROFILER_ENABLED = False
+        torch.cuda.synchronize()
+        if enable_aten_event:
+            _exit_emit_nvtx()
         torch.cuda.cudart().cudaProfilerStop()
     elif iter_id > start and iter_id < end:
         torch.cuda.nvtx.range_pop()
