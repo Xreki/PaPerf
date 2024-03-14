@@ -36,24 +36,31 @@ def main():
     model = SimpleNet(in_features, out_features)
     adam = paddle.optimizer.Adam(weight_decay=0.01, parameters=model.parameters())
 
-    profile_paddle.register_profile_hook(model)
+    # profile_paddle.register_profile_hook(model)
 
     model.train()
 
     max_iters = 20
     for iter_id in range(max_iters):
-        profile_paddle.switch_profile(iter_id, 10, 20)
+        # Set enable_layerwise_event=True to record layer-wise and operator-wise nvtx tag.
+        # There is no need to call register_profile_hook and set enable_layerwise_event=True at the same time.
+        # Set enable_layerwise_event=True is recommended for more detail information.
+        profile_paddle.switch_profile(iter_id, 10, 20, enable_layerwise_event=True)
 
-        with profile_paddle.add_nvtx_event("forward"):
+        # Use context
+        with profile_paddle.add_record_event("forward"):
             x = paddle.randn(shape=[batch_size, in_features])
             out = model(x)
             loss = paddle.mean(out)
-        with profile_paddle.add_nvtx_event("backward"):
+        with profile_paddle.add_rocord_event("backward"):
             loss.backward()
-        with profile_paddle.add_nvtx_event("optimizer"):
-            adam.step()
-        with profile_paddle.add_nvtx_event("clear_grad"):
-            adam.clear_grad()
+        # Use push & pop
+        profile_paddle.push_record_event("optimizer")
+        adam.step()
+        adam.clear_grad()
+        profile_paddle.pop_record_event()
 
 
+# Example:
+#   nsys profile --stats true -w true -t cuda,nvtx,osrt,cudnn,cublas --capture-range=cudaProfilerApi -x true --force-overwrite true -o model python main_paddle.py
 main()

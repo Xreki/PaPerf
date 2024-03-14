@@ -71,7 +71,7 @@ def switch_profile(iter_id, start, end, event_name=None):
 
 
 @contextlib.contextmanager
-def add_nvtx_event(event_name):
+def add_record_event(event_name):
     if _PROFILER_ENABLED:
         torch.cuda.nvtx.range_push(event_name)
         yield
