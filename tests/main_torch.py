@@ -47,16 +47,21 @@ def main():
     for iter_id in range(max_iters):
         profile_torch.switch_profile(iter_id, 10, 20)
 
-        with profile_torch.add_nvtx_event("forward"):
+        # Use context
+        with profile_torch.add_record_event("forward"):
             x = torch.randn(size=[batch_size, in_features]).to(device)
             out = model(x)
             loss = torch.mean(out)
-        with profile_torch.add_nvtx_event("zero_grad"):
+        with profile_torch.add_record_event("zero_grad"):
             adam.zero_grad()
-        with profile_torch.add_nvtx_event("backward"):
+        with profile_torch.add_record_event("backward"):
             loss.backward()
-        with profile_torch.add_nvtx_event("optimizer"):
-            adam.step()
+        # Use push & pop
+        profile_torch.push_record_event("optimizer")
+        adam.step()
+        profile_torch.pop_record_event()
 
 
+# Example:
+#   nsys profile --stats true -w true -t cuda,nvtx,osrt,cudnn,cublas --capture-range=cudaProfilerApi -x true --force-overwrite true -o model python main_torch.py
 main()
